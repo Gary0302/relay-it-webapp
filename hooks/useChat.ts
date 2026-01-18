@@ -4,17 +4,90 @@ import { useState, useCallback, useEffect } from 'react'
 import { createClient } from '@/lib/supabase'
 import { ChatMessage, ExtractedInfo, Screenshot } from '@/types'
 
-const API_BASE = 'https://relay-that-backend.vercel.app'
+// Use local proxy to avoid CORS issues (configured in next.config.ts)
+const API_BASE = ''
+
+// Helper function to find and mark AI-added content
+function markAiAdditions(oldContent: string, newContent: string): string {
+    // If old content is empty, mark everything as AI-added
+    if (!oldContent.trim()) {
+        return newContent
+    }
+
+    // Find the common prefix (unchanged content at the start)
+    let prefixEnd = 0
+    const minLen = Math.min(oldContent.length, newContent.length)
+    while (prefixEnd < minLen && oldContent[prefixEnd] === newContent[prefixEnd]) {
+        prefixEnd++
+    }
+
+    // Find the common suffix (unchanged content at the end)
+    let oldSuffixStart = oldContent.length
+    let newSuffixStart = newContent.length
+    while (
+        oldSuffixStart > prefixEnd &&
+        newSuffixStart > prefixEnd &&
+        oldContent[oldSuffixStart - 1] === newContent[newSuffixStart - 1]
+    ) {
+        oldSuffixStart--
+        newSuffixStart--
+    }
+
+    // Extract the parts
+    const prefix = newContent.slice(0, prefixEnd)
+    const addedContent = newContent.slice(prefixEnd, newSuffixStart)
+    const suffix = newContent.slice(newSuffixStart)
+
+    // If there's added content, wrap it with :::ai markers
+    if (addedContent.trim()) {
+        // Clean up: ensure proper line breaks around markers
+        const cleanPrefix = prefix.endsWith('\n') ? prefix : (prefix ? prefix + '\n' : '')
+        const cleanSuffix = suffix.startsWith('\n') ? suffix : (suffix ? '\n' + suffix : '')
+        const cleanAdded = addedContent.trim()
+
+        return `${cleanPrefix}\n:::ai\n${cleanAdded}\n:::\n${cleanSuffix}`.replace(/\n{3,}/g, '\n\n')
+    }
+
+    return newContent
+}
 
 interface UseChatOptions {
     sessionId: string | null
     entities: ExtractedInfo[]
     screenshots: Screenshot[]
     selectedEntityIds: Set<string>
+    currentNote: string
+    onNoteUpdate?: (newContent: string) => void
+    onNoteAppend?: (text: string) => void
     onEntitiesUpdate?: () => void
 }
 
-export function useChat({ sessionId, entities, screenshots, selectedEntityIds, onEntitiesUpdate }: UseChatOptions) {
+interface ChatContext {
+    screenshots: Array<{
+        id: string
+        rawText: string
+        summary: string
+    }>
+    sessionName?: string | null
+    sessionCategory?: string | null
+}
+
+interface ChatResponse {
+    reply: string
+    updatedNote?: string | null
+    noteWasModified: boolean
+}
+
+export function useChat({
+    sessionId,
+    entities,
+    screenshots,
+    selectedEntityIds,
+    currentNote,
+    onNoteUpdate,
+    onNoteAppend,
+    onEntitiesUpdate
+}: UseChatOptions) {
     const [messages, setMessages] = useState<ChatMessage[]>([])
     const [isLoading, setIsLoading] = useState(false)
     const [isLoadingHistory, setIsLoadingHistory] = useState(false)
@@ -61,7 +134,6 @@ export function useChat({ sessionId, entities, screenshots, selectedEntityIds, o
                 (payload) => {
                     const newMessage = payload.new as ChatMessage
                     setMessages(prev => {
-                        // Avoid duplicates
                         if (prev.some(m => m.id === newMessage.id)) return prev
                         return [...prev, newMessage]
                     })
@@ -124,78 +196,77 @@ export function useChat({ sessionId, entities, screenshots, selectedEntityIds, o
                 return
             }
 
-            // Build context from selected entities (or all if none selected)
-            const contextEntities = selectedEntityIds.size > 0
-                ? entities.filter(e => selectedEntityIds.has(e.id))
-                : entities
-
-            if (contextEntities.length === 0) {
-                await addAssistantMessage("I see your captures but need more context. Try selecting specific items or uploading more screenshots with clear content!")
-                return
+            // Build context (without screenshots to allow direct note modifications)
+            const context: ChatContext = {
+                screenshots: [],
+                sessionName: null,
+                sessionCategory: null
             }
 
-            // Build screens array - include entities even without screenshots
-            const screens = contextEntities.map(entity => {
-                const screenshot = entity.screenshot_ids.length > 0
-                    ? screenshots.find(s => entity.screenshot_ids.includes(s.id))
-                    : null
-                return {
-                    id: entity.screenshot_ids[0] || entity.id,
-                    analysis: {
-                        rawText: screenshot?.raw_text || '',
-                        summary: entity.data.summary || '',
-                        category: 'other',
-                        entities: [{
-                            type: entity.entity_type || 'generic',
-                            title: entity.data.title || entity.data.suggested_title,
-                            attributes: entity.data
-                        }],
-                        suggestedNotebookTitle: null
-                    }
-                }
-            })
+            // Call /api/chat endpoint with timeout
+            const controller = new AbortController()
+            const timeoutId = setTimeout(() => controller.abort(), 60000) // 60s timeout
 
-            // Build request payload
-            const selectedContext = selectedEntityIds.size > 0
-                ? `\n\n[User has selected ${selectedEntityIds.size} items to discuss]`
-                : ''
-
-            const payload = {
-                sessionId,
-                previousSession: {
-                    sessionSummary: `Session with captured screenshots${selectedContext}\n\nUser asked: ${userMessage}`,
-                    sessionCategory: 'other',
-                    entities: contextEntities.map(e => ({
-                        type: e.entity_type || 'generic',
-                        title: e.data.title,
-                        attributes: e.data
-                    }))
-                },
-                screens
-            }
-
-            // Call regenerate API
-            const response = await fetch(`${API_BASE}/api/regenerate`, {
+            const response = await fetch(`${API_BASE}/api/chat`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
+                body: JSON.stringify({
+                    sessionId,
+                    userMessage,
+                    currentNote,
+                    context
+                }),
+                signal: controller.signal
             })
 
-            if (!response.ok) throw new Error('API request failed')
+            clearTimeout(timeoutId)
 
-            const result = await response.json()
+            if (!response.ok) {
+                const errorText = await response.text()
+                console.error('API error response:', response.status, errorText)
+                throw new Error(`API request failed: ${response.status}`)
+            }
 
-            // Add AI response
-            const aiResponse = result.sessionSummary || "I've analyzed your captures. How can I help you with them?"
+            const result: ChatResponse = await response.json()
+            console.log('Chat API response:', result)
+
+            // Handle response - ensure we have a valid reply
+            const aiResponse = result.reply || "I processed your request."
             await addAssistantMessage(aiResponse)
+
+            // Handle note updates (wrapped in try-catch to not fail the whole chat)
+            try {
+                if (result.noteWasModified && result.updatedNote) {
+                    // AI modified the note - mark the additions with :::ai
+                    const markedContent = markAiAdditions(currentNote, result.updatedNote)
+                    onNoteUpdate?.(markedContent)
+                } else if (!result.noteWasModified) {
+                    // AI answered a question - append to note log with AI highlighting
+                    const chatLog = `\n\n:::ai\n---\n\n**You:** ${userMessage}\n\n**AI:** ${aiResponse}\n:::`
+                    onNoteAppend?.(chatLog)
+                }
+            } catch (noteError) {
+                console.error('Failed to update note:', noteError)
+                // Don't throw - chat message was already saved
+            }
 
         } catch (error) {
             console.error('Chat error:', error)
-            await addAssistantMessage("Sorry, I encountered an error. Please try again.")
+            let errorMessage = 'Unknown error'
+            if (error instanceof Error) {
+                if (error.name === 'AbortError') {
+                    errorMessage = 'Request timed out. Please try again.'
+                } else if (error.message === 'Failed to fetch') {
+                    errorMessage = 'Network error. Please check your connection and try again.'
+                } else {
+                    errorMessage = error.message
+                }
+            }
+            await addAssistantMessage(`Sorry, I encountered an error: ${errorMessage}`)
         } finally {
             setIsLoading(false)
         }
-    }, [sessionId, entities, screenshots, selectedEntityIds])
+    }, [sessionId, entities, screenshots, selectedEntityIds, currentNote, onNoteUpdate, onNoteAppend])
 
     const handleSummarizeCommand = async (userQuery: string) => {
         try {
@@ -215,6 +286,7 @@ export function useChat({ sessionId, entities, screenshots, selectedEntityIds, o
                 sessionName: 'Chat Summary',
                 entities: contextEntities.map(e => ({
                     type: e.entity_type || 'generic',
+                    title: e.data.title,
                     attributes: e.data
                 }))
             }
@@ -254,14 +326,14 @@ export function useChat({ sessionId, entities, screenshots, selectedEntityIds, o
             })
 
             // Build response message
-            let responseText = `📝 **${result.suggestedTitle}**\n\n${result.condensedSummary}`
+            let responseText = `**${result.suggestedTitle}**\n\n${result.condensedSummary}`
 
             if (result.keyHighlights?.length > 0) {
-                responseText += '\n\n**Key Highlights:**\n' + result.keyHighlights.map((h: string) => `• ${h}`).join('\n')
+                responseText += '\n\n**Key Highlights:**\n' + result.keyHighlights.map((h: string) => `- ${h}`).join('\n')
             }
 
             if (result.recommendations?.length > 0) {
-                responseText += '\n\n**Recommendations:**\n' + result.recommendations.map((r: string) => `• ${r}`).join('\n')
+                responseText += '\n\n**Recommendations:**\n' + result.recommendations.map((r: string) => `- ${r}`).join('\n')
             }
 
             await addAssistantMessage(responseText)
@@ -276,14 +348,36 @@ export function useChat({ sessionId, entities, screenshots, selectedEntityIds, o
     }
 
     const addAssistantMessage = async (content: string) => {
-        const savedMsg = await saveMessage('assistant', content)
-        if (savedMsg) {
-            setMessages(prev => {
-                if (prev.some(m => m.id === savedMsg.id)) return prev
-                return [...prev, savedMsg]
-            })
+        try {
+            const savedMsg = await saveMessage('assistant', content)
+            if (savedMsg) {
+                setMessages(prev => {
+                    if (prev.some(m => m.id === savedMsg.id)) return prev
+                    return [...prev, savedMsg]
+                })
+            } else {
+                // Failed to save to DB, but still show in UI
+                setMessages(prev => [...prev, {
+                    id: `temp-${Date.now()}`,
+                    session_id: sessionId || '',
+                    role: 'assistant' as const,
+                    content,
+                    created_at: new Date().toISOString()
+                }])
+            }
+        } catch (error) {
+            console.error('Failed to add assistant message:', error)
+            // Still show message in UI even if DB save fails
+            setMessages(prev => [...prev, {
+                id: `temp-${Date.now()}`,
+                session_id: sessionId || '',
+                role: 'assistant' as const,
+                content,
+                created_at: new Date().toISOString()
+            }])
+        } finally {
+            setIsLoading(false)
         }
-        setIsLoading(false)
     }
 
     const clearMessages = useCallback(async () => {

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { FileText, ChevronDown, Loader2, Plus } from 'lucide-react'
+import { Sparkles, ChevronDown, Loader2, Plus } from 'lucide-react'
 import { createClient } from '@/lib/supabase'
 import { cn } from '@/lib/utils'
 
@@ -61,7 +61,7 @@ export function SummarizeButton({ sessionId, onComplete }: SummarizeButtonProps)
             }
 
             // 3. Call API
-            const response = await fetch('https://relay-that-backend.vercel.app/api/summarize', {
+            const response = await fetch('/api/summarize', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
@@ -129,44 +129,48 @@ export function SummarizeButton({ sessionId, onComplete }: SummarizeButtonProps)
     }
 
     return (
-        <div className="relative inline-flex shadow-sm rounded-md" ref={menuRef}>
-            <button
-                onClick={() => handleSummarize(false)}
-                disabled={loading}
-                className={cn(
-                    "relative inline-flex items-center px-4 py-2 rounded-l-md border border-primary/20 bg-primary/10 text-sm font-medium text-primary hover:bg-primary/20 focus:z-10 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-colors",
-                    loading && "opacity-70 cursor-wait"
-                )}
-                title="Summarize Session"
-            >
-                {loading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <FileText className="w-4 h-4 mr-2" />}
-                Summarize
-            </button>
-            <div className="-ml-px relative block">
+        <div className="relative w-full" ref={menuRef}>
+            <div className="flex w-full shadow-sm rounded-lg overflow-hidden">
+                <button
+                    onClick={() => handleSummarize(false)}
+                    disabled={loading}
+                    className={cn(
+                        "flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-primary/10 text-primary font-semibold hover:bg-primary/20 transition-colors",
+                        loading && "opacity-70 cursor-wait"
+                    )}
+                    title="Summarize Session"
+                >
+                    {loading ? (
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                    ) : (
+                        <Sparkles className="w-5 h-5" />
+                    )}
+                    {loading ? 'Summarizing...' : 'Summarize All'}
+                </button>
                 <button
                     onClick={() => setShowMenu(!showMenu)}
                     disabled={loading}
-                    className="relative inline-flex items-center px-2 py-2 rounded-r-md border border-primary/20 bg-primary/10 text-sm font-medium text-primary hover:bg-primary/20 focus:z-10 focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-colors h-full"
+                    className="px-3 bg-primary/10 text-primary hover:bg-primary/20 border-l border-primary/20 transition-colors"
                     title="More options"
                 >
                     <ChevronDown className="w-4 h-4" />
                 </button>
-
-                {showMenu && (
-                    <div className="origin-top-right absolute right-0 mt-2 -mr-1 w-56 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 focus:outline-none z-50">
-                        <div className="py-1" role="menu" aria-orientation="vertical">
-                            <button
-                                onClick={() => handleSummarize(true)}
-                                className="w-full text-left group flex items-center px-4 py-2 text-sm text-foreground hover:bg-muted"
-                                role="menuitem"
-                            >
-                                <Plus className="mr-3 h-4 w-4 text-muted-foreground group-hover:text-primary" />
-                                Create New Session & Summarize
-                            </button>
-                        </div>
-                    </div>
-                )}
             </div>
+
+            {showMenu && (
+                <div className="absolute right-0 left-0 mt-2 rounded-lg shadow-lg bg-white ring-1 ring-black/5 focus:outline-none z-50">
+                    <div className="py-1" role="menu">
+                        <button
+                            onClick={() => handleSummarize(true)}
+                            className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-foreground hover:bg-muted transition-colors"
+                            role="menuitem"
+                        >
+                            <Plus className="w-4 h-4 text-muted-foreground" />
+                            Create New Session & Summarize
+                        </button>
+                    </div>
+                </div>
+            )}
         </div>
     )
 }

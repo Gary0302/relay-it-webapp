@@ -26,3 +26,26 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* AI-added content highlight animation - fades out completely */
+@keyframes ai-highlight-fadeout {
+  0% {
+    background-color: rgb(134 239 172 / 0.8);
+    border-left-color: rgb(34 197 94);
+    box-shadow: 0 0 8px rgb(34 197 94 / 0.3);
+  }
+  30% {
+    background-color: rgb(187 247 208 / 0.6);
+    border-left-color: rgb(74 222 128);
+    box-shadow: 0 0 4px rgb(34 197 94 / 0.2);
+  }
+  100% {
+    background-color: transparent;
+    border-left-color: transparent;
+    box-shadow: none;
+  }
+}
+
+.ai-highlight-new {
+  animation: ai-highlight-fadeout 5s ease-out forwards;
+}

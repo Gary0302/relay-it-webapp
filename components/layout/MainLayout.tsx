@@ -83,6 +83,7 @@ export function MainLayout() {
                                         screenshots={screenshots}
                                         loading={loading}
                                         sessionId={currentSessionId}
+                                        onSessionChange={(newId) => handleSessionChange(newId, true)}
                                         onRefresh={refresh}
                                     />
                                 </Panel>

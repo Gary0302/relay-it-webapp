@@ -29,7 +29,16 @@ export interface ExtractedInfo {
 
 export interface ChatMessage {
     id: string
+    session_id?: string
     role: 'user' | 'assistant'
     content: string
     created_at: string
+}
+
+export interface SessionNote {
+    id: string
+    session_id: string
+    content: string
+    created_at: string
+    updated_at: string
 }

@@ -87,7 +87,7 @@ export function UploadButton({ sessionId, onUploadComplete }: UploadButtonProps)
                 reader.readAsDataURL(blob)
             })
 
-            const apiResponse = await fetch('https://relay-that-backend.vercel.app/api/analyze', {
+            const apiResponse = await fetch('/api/analyze', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ image: base64 })
